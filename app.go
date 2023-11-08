@@ -29,6 +29,26 @@ type TendermintApplication struct {
 
 var _ abcitypes.Application = (*TendermintApplication)(nil)
 
+// Define a constant for transaction types
+const (
+	TypeVerifySignature = "verify_signature"
+	// Define other transaction types here
+)
+
+// TxPayload represents a common payload for transactions
+type TxPayload struct {
+	Type string `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+// TxVerifySignature represents the data needed to verify a signature
+type TxVerifySignature struct {
+	From      string `json:"from"`
+	Message   string `json:"message"`
+	Signature string `json:"signature"`
+	PubKey    ed25519.PubKey `json:"pubKey"` // This would be the ed25519 public key as a hex string
+}
+
 func (app *TendermintApplication) CallGetOperator(address common.Address) (uint8, error) {    
     operatorStatus, err := app.contract.GetOperator(nil, address)
     if err != nil {
@@ -104,42 +124,48 @@ func (app *TendermintApplication) VerifySignature(address common.Address, messag
 	return recoveredAddr == address, nil
 }
 
-func (app *TendermintApplication) DeliverTx(req abcitypes.RequestDeliverTx) abcitypes.ResponseDeliverTx {
-	// Example of how the transaction might be structured
-	// txBytes could be JSON, Protobuf, or any other format you've defined for your transactions
-	var tx struct {
-		From    string `json:"from"`
-		Message string `json:"message"`
-		Signature string `json:"signature"`
-		PubKey  ed25519.PubKey `json:"pubKey"` // This would be the ed25519 public key as a hex string
-	}
-
-	err := json.Unmarshal(req.Tx, &tx)
+func (app *TendermintApplication) handleVerifySignatureTx(data json.RawMessage) abcitypes.ResponseDeliverTx {
+	var tx TxVerifySignature
+	err := json.Unmarshal(data, &tx)
 	if err != nil {
-		// Handle error
-		return abcitypes.ResponseDeliverTx{Code: 1, Log: "tx decode error"}
+		return abcitypes.ResponseDeliverTx{Code: 1, Log: "verify signature tx decode error"}
 	}
 
 	address := common.HexToAddress(tx.From)
 	valid, err := app.VerifySignature(address, tx.Message, tx.Signature)
 	if err != nil || !valid {
-		// Handle invalid signature
 		return abcitypes.ResponseDeliverTx{Code: 2, Log: "invalid signature"}
 	}
 
 	status, err := app.CallGetOperator(common.HexToAddress(tx.From))
-
-	if err != nil || status == 0{
-        return abcitypes.ResponseDeliverTx{Code: 2, Log: "invalid ethereum address"}
+	if err != nil || status == 0 {
+		return abcitypes.ResponseDeliverTx{Code: 2, Log: "invalid ethereum address"}
 	}
 
 	app.queue = append(app.queue, tx.PubKey)
 	if err != nil {
-		// Handle error in adding to queue
 		return abcitypes.ResponseDeliverTx{Code: 3, Log: "error adding to validator queue"}
 	}
 
 	return abcitypes.ResponseDeliverTx{Code: 0}
+}
+
+func (app *TendermintApplication) DeliverTx(req abcitypes.RequestDeliverTx) abcitypes.ResponseDeliverTx {
+	// First, unmarshal the transaction into the common payload structure
+	var txPayload TxPayload
+	err := json.Unmarshal(req.Tx, &txPayload)
+	if err != nil {
+		return abcitypes.ResponseDeliverTx{Code: 1, Log: "tx decode error"}
+	}
+
+	// Dispatch to the appropriate handler based on the transaction type
+	switch txPayload.Type {
+	case TypeVerifySignature:
+		return app.handleVerifySignatureTx(txPayload.Data)
+	// Add cases for other transaction types here
+	default:
+		return abcitypes.ResponseDeliverTx{Code: 1, Log: "unknown tx type"}
+	}
 }
 
 func (TendermintApplication) CheckTx(req abcitypes.RequestCheckTx) abcitypes.ResponseCheckTx {
