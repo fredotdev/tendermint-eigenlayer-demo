@@ -7,6 +7,11 @@ import (
 	"errors"
 	"strconv"
 	"encoding/json"
+	"encoding/base64"
+	"crypto/sha256"
+	"fmt"
+	//"io/ioutil"
+	//"net/http"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -25,6 +30,7 @@ type TendermintApplication struct {
 	ethClient *ethclient.Client
 	contract  *blsregistry.BLSRegistryCoordinatorWithIndices
 	queue []ed25519.PubKey
+	state map[string]string
 }
 
 var _ abcitypes.Application = (*TendermintApplication)(nil)
@@ -32,6 +38,7 @@ var _ abcitypes.Application = (*TendermintApplication)(nil)
 // Define a constant for transaction types
 const (
 	TypeVerifySignature = "verify_signature"
+	TypeCompute         = "compute"
 	// Define other transaction types here
 )
 
@@ -47,6 +54,10 @@ type TxVerifySignature struct {
 	Message   string `json:"message"`
 	Signature string `json:"signature"`
 	PubKey    ed25519.PubKey `json:"pubKey"` // This would be the ed25519 public key as a hex string
+}
+
+type TxCompute struct {
+	Input []byte `json:"input"`
 }
 
 func (app *TendermintApplication) CallGetOperator(address common.Address) (uint8, error) {    
@@ -86,11 +97,12 @@ func NewTendermintApplication(ethereumNodeURL string) *TendermintApplication {
         log.Fatalf("Failed to instantiate the contract: %v", err)
     }
 
-    return &TendermintApplication{
-        ethClient: client,
-        contract:  contractInstance,
-		queue: []ed25519.PubKey{},
-    }
+	return &TendermintApplication{
+		ethClient: client,
+		contract:  contractInstance,
+		queue:     []ed25519.PubKey{},
+		state:     make(map[string]string),
+	}
 }
 
 func (TendermintApplication) Info(req abcitypes.RequestInfo) abcitypes.ResponseInfo {
@@ -124,7 +136,42 @@ func (app *TendermintApplication) VerifySignature(address common.Address, messag
 	return recoveredAddr == address, nil
 }
 
+func (app *TendermintApplication) handleComputeTx(data json.RawMessage) abcitypes.ResponseDeliverTx {
+	var tx TxCompute
+	err := json.Unmarshal(data, &tx)
+	if err != nil {
+		return abcitypes.ResponseDeliverTx{Code: 1, Log: "compute tx decode error"}
+	}
+
+	// Calculate SHA256 of input data
+	inputHash := sha256.Sum256(tx.Input)
+
+	// Send the input to the remote compute server
+	/*
+	resp, err := http.Post("http://remote-server/compute", "application/octet-stream", bytes.NewReader(tx.Input))
+	if err != nil {
+		return abcitypes.ResponseDeliverTx{Code: 2, Log: "failed to send data to compute server"}
+	}
+	defer resp.Body.Close()
+
+	// Read the response (output data)
+	output, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return abcitypes.ResponseDeliverTx{Code: 3, Log: "failed to read response from compute server"}
+	}
+
+	// Calculate SHA256 of output data
+	outputHash := sha256.Sum256(output)
+	*/
+	// Store the input and output hashes in the state
+
+	app.state[hex.EncodeToString(inputHash[:])] = hex.EncodeToString(inputHash[:]) // XXX TODO: replace with outputHash
+
+	return abcitypes.ResponseDeliverTx{Code: 0}
+}
+
 func (app *TendermintApplication) handleVerifySignatureTx(data json.RawMessage) abcitypes.ResponseDeliverTx {
+	
 	var tx TxVerifySignature
 	err := json.Unmarshal(data, &tx)
 	if err != nil {
@@ -136,32 +183,43 @@ func (app *TendermintApplication) handleVerifySignatureTx(data json.RawMessage) 
 	if err != nil || !valid {
 		return abcitypes.ResponseDeliverTx{Code: 2, Log: "invalid signature"}
 	}
-
+//
 	status, err := app.CallGetOperator(common.HexToAddress(tx.From))
 	if err != nil || status == 0 {
 		return abcitypes.ResponseDeliverTx{Code: 2, Log: "invalid ethereum address"}
 	}
 
 	app.queue = append(app.queue, tx.PubKey)
-	if err != nil {
-		return abcitypes.ResponseDeliverTx{Code: 3, Log: "error adding to validator queue"}
-	}
+
+	fmt.Printf("delivered:")
 
 	return abcitypes.ResponseDeliverTx{Code: 0}
 }
 
 func (app *TendermintApplication) DeliverTx(req abcitypes.RequestDeliverTx) abcitypes.ResponseDeliverTx {
+	
 	// First, unmarshal the transaction into the common payload structure
-	var txPayload TxPayload
-	err := json.Unmarshal(req.Tx, &txPayload)
-	if err != nil {
-		return abcitypes.ResponseDeliverTx{Code: 1, Log: "tx decode error"}
-	}
+
+    // Decode the base64 bytes to a JSON string
+    txData, err := base64.StdEncoding.DecodeString(string(req.Tx))
+    if err != nil {
+        return abcitypes.ResponseDeliverTx{Code: 1, Log: "base64 decode error"}
+    }
+
+    // Unmarshal the transaction into the common payload structure
+    var txPayload TxPayload
+    err = json.Unmarshal(txData, &txPayload)
+    if err != nil {
+        return abcitypes.ResponseDeliverTx{Code: 1, Log: "tx decode error"}
+    }
+	
 
 	// Dispatch to the appropriate handler based on the transaction type
 	switch txPayload.Type {
 	case TypeVerifySignature:
 		return app.handleVerifySignatureTx(txPayload.Data)
+	case TypeCompute:
+		return app.handleComputeTx(txPayload.Data)
 	// Add cases for other transaction types here
 	default:
 		return abcitypes.ResponseDeliverTx{Code: 1, Log: "unknown tx type"}
