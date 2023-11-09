@@ -10,8 +10,10 @@ import (
 	"encoding/base64"
 	"crypto/sha256"
 	"fmt"
+
 	//"io/ioutil"
-	//"net/http"
+	"net/http"
+    "crypto/rand"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -103,14 +105,6 @@ func NewTendermintApplication(ethereumNodeURL string) *TendermintApplication {
 		queue:     []ed25519.PubKey{},
 		state:     make(map[string]string),
 	}
-}
-
-func (TendermintApplication) Info(req abcitypes.RequestInfo) abcitypes.ResponseInfo {
-	return abcitypes.ResponseInfo{}
-}
-
-func (TendermintApplication) SetOption(req abcitypes.RequestSetOption) abcitypes.ResponseSetOption {
-	return abcitypes.ResponseSetOption{}
 }
 
 func (app *TendermintApplication) VerifySignature(address common.Address, message, sigHex string) (bool, error) {
@@ -226,26 +220,6 @@ func (app *TendermintApplication) DeliverTx(req abcitypes.RequestDeliverTx) abci
 	}
 }
 
-func (TendermintApplication) CheckTx(req abcitypes.RequestCheckTx) abcitypes.ResponseCheckTx {
-	return abcitypes.ResponseCheckTx{Code: 0}
-}
-
-func (TendermintApplication) Commit() abcitypes.ResponseCommit {
-	return abcitypes.ResponseCommit{}
-}
-
-func (TendermintApplication) Query(req abcitypes.RequestQuery) abcitypes.ResponseQuery {
-	return abcitypes.ResponseQuery{Code: 0}
-}
-
-func (TendermintApplication) InitChain(req abcitypes.RequestInitChain) abcitypes.ResponseInitChain {
-	return abcitypes.ResponseInitChain{}
-}
-
-func (TendermintApplication) BeginBlock(req abcitypes.RequestBeginBlock) abcitypes.ResponseBeginBlock {
-	return abcitypes.ResponseBeginBlock{}
-}
-
 func (app *TendermintApplication) EndBlock(req abcitypes.RequestEndBlock) abcitypes.ResponseEndBlock {
 	var validatorUpdates []abcitypes.ValidatorUpdate
 
@@ -266,6 +240,77 @@ func (app *TendermintApplication) EndBlock(req abcitypes.RequestEndBlock) abcity
 	return abcitypes.ResponseEndBlock{
 		ValidatorUpdates: validatorUpdates,
 	}
+}
+
+func (app *TendermintApplication) StartHTTPServer(address string) error {
+    http.HandleFunc("/sign", app.handleSignRequest)
+    return http.ListenAndServe(address, nil)
+}
+
+func (app *TendermintApplication) handleSignRequest(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    
+    var signatures []string
+
+    // Iterate over the state and sign the data
+    for inputHash, outputHash := range app.state {
+        message := inputHash + outputHash // Concatenate the input and output hashes
+        signature, err := app.SignDataWithBN254(message) // You need to implement this method
+        if err != nil {
+            http.Error(w, "Failed to sign data", http.StatusInternalServerError)
+            return
+        }
+        signatures = append(signatures, signature)
+    }
+
+    // Respond with the signatures
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(signatures)
+}
+
+func (app *TendermintApplication) SignDataWithBN254(message string) (string, error) {
+    // TODO: Implement actual signing logic with bn254 curve
+    // The following is a placeholder and does not represent actual bn254 signing
+
+    // Create a random signature as a placeholder
+    signature := make([]byte, 64) // Adjust size according to actual signature length
+    _, err := rand.Read(signature)
+    if err != nil {
+        return "", err
+    }
+
+    return hex.EncodeToString(signature), nil
+}
+
+func (TendermintApplication) Info(req abcitypes.RequestInfo) abcitypes.ResponseInfo {
+	return abcitypes.ResponseInfo{}
+}
+
+func (TendermintApplication) SetOption(req abcitypes.RequestSetOption) abcitypes.ResponseSetOption {
+	return abcitypes.ResponseSetOption{}
+}
+
+func (TendermintApplication) CheckTx(req abcitypes.RequestCheckTx) abcitypes.ResponseCheckTx {
+	return abcitypes.ResponseCheckTx{Code: 0}
+}
+
+func (TendermintApplication) Commit() abcitypes.ResponseCommit {
+	return abcitypes.ResponseCommit{}
+}
+
+func (TendermintApplication) Query(req abcitypes.RequestQuery) abcitypes.ResponseQuery {
+	return abcitypes.ResponseQuery{Code: 0}
+}
+
+func (TendermintApplication) InitChain(req abcitypes.RequestInitChain) abcitypes.ResponseInitChain {
+	return abcitypes.ResponseInitChain{}
+}
+
+func (TendermintApplication) BeginBlock(req abcitypes.RequestBeginBlock) abcitypes.ResponseBeginBlock {
+	return abcitypes.ResponseBeginBlock{}
 }
 
 func (TendermintApplication) ListSnapshots(abcitypes.RequestListSnapshots) abcitypes.ResponseListSnapshots {

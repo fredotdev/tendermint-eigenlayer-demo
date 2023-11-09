@@ -42,6 +42,7 @@ func main() {
     }
 
 	app := NewTendermintApplication(rpcURL)
+	go app.StartHTTPServer(":8080")
 
 	flag.Parse()
 
