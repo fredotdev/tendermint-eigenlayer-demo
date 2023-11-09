@@ -13,6 +13,7 @@ import (
 	"io/ioutil"
 	"bytes"
 	"net/http"
+	"crypto/rand"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -283,28 +284,17 @@ func (app *TendermintApplication) handleSignRequest(w http.ResponseWriter, r *ht
 }
 
 func (app *TendermintApplication) SignDataWithBN254(message string) (string, error) {
-	// Read the private key from environment variable
-	privateKeyHex := os.Getenv("BN254_PRIV_KEY")
-	if privateKeyHex == "" {
-		return "", errors.New("private key not set in BN254_PRIV_KEY environment variable")
-	}
+    // TODO: Implement actual signing logic with bn254 curve
+    // The following is a placeholder and does not represent actual bn254 signing
 
-	// Convert the private key from a hex string to a BLS SecretKey
-	var secretKey bls.SecretKey
-	if err := secretKey.DeserializeHexStr(privateKeyHex); err != nil {
-		return "", fmt.Errorf("failed to deserialize private key: %v", err)
-	}
+    // Create a random signature as a placeholder
+    signature := make([]byte, 64) // Adjust size according to actual signature length
+    _, err := rand.Read(signature)
+    if err != nil {
+        return "", err
+    }
 
-	// Hash the message using SHA256
-	msgHash := sha256.Sum256([]byte(message))
-
-	// Sign the message hash
-	signature := secretKey.SignHash(msgHash[:])
-
-	// Serialize the signature to a hex string
-	signatureHex := signature.SerializeToHexStr()
-
-	return signatureHex, nil
+    return hex.EncodeToString(signature), nil
 }
 
 func (TendermintApplication) Info(req abcitypes.RequestInfo) abcitypes.ResponseInfo {
