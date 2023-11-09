@@ -10,10 +10,9 @@ import (
 	"encoding/base64"
 	"crypto/sha256"
 	"fmt"
-
-	//"io/ioutil"
+	"io/ioutil"
+	"bytes"
 	"net/http"
-    "crypto/rand"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -24,6 +23,8 @@ import (
 
 	abcitypes "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/crypto/ed25519"
+
+	"github.com/herumi/bls-eth-go-binary/bls"
 
 	blsregistry "github.com/me/example/abi"
 )
@@ -60,6 +61,12 @@ type TxVerifySignature struct {
 
 type TxCompute struct {
 	Input []byte `json:"input"`
+}
+
+func init() {
+	if err := bls.Init(bls.BLS12_381); err != nil {
+		log.Fatalf("Failed to initialize BLS library: %v", err)
+	}
 }
 
 func (app *TendermintApplication) CallGetOperator(address common.Address) (uint8, error) {    
@@ -141,8 +148,9 @@ func (app *TendermintApplication) handleComputeTx(data json.RawMessage) abcitype
 	inputHash := sha256.Sum256(tx.Input)
 
 	// Send the input to the remote compute server
-	/*
-	resp, err := http.Post("http://remote-server/compute", "application/octet-stream", bytes.NewReader(tx.Input))
+	
+	resp, err := http.Post("http://localhost:3000/compute", "application/octet-stream", bytes.NewReader(tx.Input))
+
 	if err != nil {
 		return abcitypes.ResponseDeliverTx{Code: 2, Log: "failed to send data to compute server"}
 	}
@@ -156,10 +164,10 @@ func (app *TendermintApplication) handleComputeTx(data json.RawMessage) abcitype
 
 	// Calculate SHA256 of output data
 	outputHash := sha256.Sum256(output)
-	*/
+	
 	// Store the input and output hashes in the state
 
-	app.state[hex.EncodeToString(inputHash[:])] = hex.EncodeToString(inputHash[:]) // XXX TODO: replace with outputHash
+	app.state[hex.EncodeToString(inputHash[:])] = hex.EncodeToString(outputHash[:]) // XXX TODO: replace with outputHash
 
 	return abcitypes.ResponseDeliverTx{Code: 0}
 }
@@ -255,12 +263,15 @@ func (app *TendermintApplication) handleSignRequest(w http.ResponseWriter, r *ht
     
     var signatures []string
 
+	// print outputHash and inputHash superated with an arrow
+	
     // Iterate over the state and sign the data
     for inputHash, outputHash := range app.state {
+		fmt.Fprintf(w, "%s -> %s\n", inputHash, outputHash)
         message := inputHash + outputHash // Concatenate the input and output hashes
         signature, err := app.SignDataWithBN254(message) // You need to implement this method
         if err != nil {
-            http.Error(w, "Failed to sign data", http.StatusInternalServerError)
+            http.Error(w, fmt.Sprintf("Failed to sign data: %v", err), http.StatusInternalServerError)
             return
         }
         signatures = append(signatures, signature)
@@ -272,17 +283,28 @@ func (app *TendermintApplication) handleSignRequest(w http.ResponseWriter, r *ht
 }
 
 func (app *TendermintApplication) SignDataWithBN254(message string) (string, error) {
-    // TODO: Implement actual signing logic with bn254 curve
-    // The following is a placeholder and does not represent actual bn254 signing
+	// Read the private key from environment variable
+	privateKeyHex := os.Getenv("BN254_PRIV_KEY")
+	if privateKeyHex == "" {
+		return "", errors.New("private key not set in BN254_PRIV_KEY environment variable")
+	}
 
-    // Create a random signature as a placeholder
-    signature := make([]byte, 64) // Adjust size according to actual signature length
-    _, err := rand.Read(signature)
-    if err != nil {
-        return "", err
-    }
+	// Convert the private key from a hex string to a BLS SecretKey
+	var secretKey bls.SecretKey
+	if err := secretKey.DeserializeHexStr(privateKeyHex); err != nil {
+		return "", fmt.Errorf("failed to deserialize private key: %v", err)
+	}
 
-    return hex.EncodeToString(signature), nil
+	// Hash the message using SHA256
+	msgHash := sha256.Sum256([]byte(message))
+
+	// Sign the message hash
+	signature := secretKey.SignHash(msgHash[:])
+
+	// Serialize the signature to a hex string
+	signatureHex := signature.SerializeToHexStr()
+
+	return signatureHex, nil
 }
 
 func (TendermintApplication) Info(req abcitypes.RequestInfo) abcitypes.ResponseInfo {
