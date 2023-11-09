@@ -6,3 +6,4 @@
 .env
 /config
 /data
+/scripts/output
